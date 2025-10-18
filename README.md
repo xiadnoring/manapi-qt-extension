@@ -2,7 +2,7 @@
 
 Qt6 and Qt7 Extern Event Loop for [ManapiHttp](https://github.com/xiadnoring/manapi-http) (based on libuv)
 
-Required [ManapiHttp](https://github.com/xiadnoring/manapi-http) version is ```0.0.2```
+Required [ManapiHttp](https://github.com/xiadnoring/manapi-http) version is ```1.0.2```
 
 > [!WARNING]
 > Qt6.10 does not work because they have broken
