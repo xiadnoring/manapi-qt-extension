@@ -143,6 +143,9 @@ inline void manapi::qt::event_dispatcher::closingDown() {
 }
 
 inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEventsFlags flags) {
+    auto &ev = manapi::async::current()->eventloop();
+    bool const active = ev->is_active();
+
     // we are awake!
     emit awake();
 
@@ -157,22 +160,23 @@ inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEvent
 
     manapi::sys_error::status status;
     // run libuv poll depending on willWait value
-    if (willWait) {
-        // we will block! signalize it
-        emit aboutToBlock();
+    if (!active) {
+        if (willWait) {
+            // we will block! signalize it
+            emit aboutToBlock();
 
-        status = manapi::async::current()->eventloop()->run(manapi::ev::RUN_ONCE);
-    } else {
-        // run loop once, do not block on no events
-        status = manapi::async::current()->eventloop()->run(manapi::ev::RUN_NOWAIT);
-    }
-
-
-    if (!status) {
-        if (status.code() != manapi::ERR_ABORTED) {
-            status.unwrap();
+            status = ev->run(manapi::ev::RUN_ONCE);
+        } else {
+            // run loop once, do not block on no events
+            status = ev->run(manapi::ev::RUN_NOWAIT);
         }
-        QCoreApplication::quit();
+
+        if (!status) {
+            if (status.code() != manapi::ERR_ABORTED) {
+                status.unwrap();
+            }
+            QCoreApplication::quit();
+        }
     }
 
     // return true if we processed something
