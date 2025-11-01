@@ -5,7 +5,7 @@ Qt6 and Qt7 Extern Event Loop for [ManapiHttp](https://github.com/xiadnoring/man
 Required [ManapiHttp](https://github.com/xiadnoring/manapi-http) version is ```1.0.2```
 
 > [!WARNING]
-> Qt6.10 does not work because they have broken
+> Qt6.10 does not work because they broke
 > their Event Dispatcher API
 
 ### Import
@@ -52,6 +52,7 @@ int main(int argc, char *argv[]) {
 
         manapi::async::current()->eventloop()->custom_event_loop([&app, event_dispatcher] ()
             -> void {
+            /* event loop run here */
             QApplication::exec();
             event_dispatcher->unsubscribe();
         });
@@ -62,8 +63,9 @@ int main(int argc, char *argv[]) {
                 manapi::time::current_time())));
         });
 
+        /* custom event loop run here */
         cb ();
-    });
+    } /* event loop run here too */ );
 
     return 0;
 }
@@ -72,3 +74,4 @@ int main(int argc, char *argv[]) {
 ### Gallery
 
 ![Example](./assets/img1.png)
+![Example](./assets/img2.png)

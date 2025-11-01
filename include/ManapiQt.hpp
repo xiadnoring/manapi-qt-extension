@@ -416,7 +416,6 @@ inline bool manapi::qt::event_dispatcher::unregisterTimer(Qt::TimerId timerId) {
             return true;
         }
     }
-
     return false;
 }
 
