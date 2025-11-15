@@ -3,7 +3,7 @@
 #include <manapihttp/ManapiInitTools.hpp>
 #include <manapihttp/ManapiEventLoop.hpp>
 #include <manapihttp/ManapiTime.hpp>
-#include <manapihttp/std/ManapiScopePtr.hpp>
+#include <mit anapihttp/std/ManapiScopePtr.hpp>
 
 #include <QApplication>
 #include <QWidget>
