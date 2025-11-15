@@ -16,6 +16,17 @@
 #include <manapihttp/std/ManapiRef.hpp>
 #include <manapihttp/std/ManapiAsyncContext.hpp>
 
+#ifndef MANAPIQT_ISSUE_6_10_0
+#   define MANAPIQT_ISSUE_6_10_0 QT_VERSION >= QT_VERSION_CHECK(6, 10, 0) && (__linux__) && (__x86_64__)
+#endif
+
+#if MANAPIQT_ISSUE_6_10_0
+
+#endif
+
+extern void *_ZN15QtWaylandClient19QWaylandIntegration9sInstanceE;
+extern void *_ZNK15QtWaylandClient19QWaylandIntegration21createEventDispatcherEv;
+
 namespace manapi::qt {
     class event_dispatcher;
 
@@ -41,6 +52,7 @@ namespace manapi::qt {
     };
 
     class event_dispatcher final : public QAbstractEventDispatcherV2 {
+
         Q_DISABLE_COPY(event_dispatcher)
     public:
         event_dispatcher ();
@@ -91,7 +103,10 @@ namespace manapi::qt {
 
         std::set<poller_data_t *> m_pollers;
 
-        std::atomic<int> flags;
+        std::atomic<int> m_flags;
+#if MANAPIQT_ISSUE_6_10_0
+        QEventLoop::ProcessEventsFlags *m_shared_flags;
+#endif
     };
 }
 
@@ -108,20 +123,32 @@ inline manapi::error::status_or<manapi::qt::event_dispatcher *> manapi::qt::even
 }
 
 inline manapi::qt::event_dispatcher::event_dispatcher() : event_dispatcher(nullptr) {
+
 }
 
 inline manapi::qt::event_dispatcher::event_dispatcher(QObject* parent)
     : QAbstractEventDispatcherV2(parent) {
     this->m_wakeupHandle = manapi::async::current()->eventloop()->create_watcher_async(nullptr).unwrap();
-    this->flags.fetch_or(0b1);
+    this->m_flags.fetch_or(0b1);
     this->m_processedCallbacks = 0;
+#if MANAPIQT_ISSUE_6_10_0
+    // C++
+    this->m_shared_flags=nullptr;
+    class unknown_class;
+    typedef void *(unknown_class::*MethodType)();
+    unknown_class *obj = static_cast<unknown_class *> (_ZN15QtWaylandClient19QWaylandIntegration9sInstanceE);
+    MethodType method = nullptr;
+    void *arhh[2] = {&_ZNK15QtWaylandClient19QWaylandIntegration21createEventDispatcherEv, nullptr};
+    memcpy (&method, arhh, sizeof (MethodType));
+    this->m_shared_flags = (QEventLoop::ProcessEventsFlags *)((char*)(obj->*method)() + 16);
+#endif
 }
 
 inline manapi::qt::event_dispatcher::~event_dispatcher() = default;
 
 inline void manapi::qt::event_dispatcher::unsubscribe() MANAPIHTTP_NOEXCEPT {
-    if (this->flags & 0b1) {
-        this->flags.fetch_xor(0b1);
+    if (this->m_flags & 0b1) {
+        this->m_flags.fetch_xor(0b1);
     }
     manapi::async::current()->eventloop()->stop_watcher(std::move(this->m_wakeupHandle));
     while (!this->m_pollers.empty()) {
@@ -143,6 +170,11 @@ inline void manapi::qt::event_dispatcher::closingDown() {
 }
 
 inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEventsFlags flags) {
+#if MANAPIQT_ISSUE_6_10_0
+    if (this->m_shared_flags)
+    *this->m_shared_flags = flags;
+#endif
+
     auto &ev = manapi::async::current()->eventloop();
     bool const active = ev->is_active();
 
@@ -340,6 +372,7 @@ inline void manapi::qt::event_dispatcher::disableSocketNotifier(QSocketNotifier*
     }
 }
 
+
 inline QAbstractEventDispatcher::Duration manapi::qt::event_dispatcher::remainingTime(Qt::TimerId timerId) const {
     auto it = this->m_timers.find(timerId);
     if (it != this->m_timers.end()) {
@@ -449,7 +482,7 @@ inline bool manapi::qt::event_dispatcher::unregisterTimers(QObject* object) {
 }
 
 inline void manapi::qt::event_dispatcher::wakeUp() {
-    if (this->flags & 0b1) {
+    if (this->m_flags & 0b1) {
         this->m_wakeupHandle->send();
     }
 }
@@ -465,3 +498,5 @@ inline int manapi::qt::event_dispatcher::qtouv(QSocketNotifier::Type qtEventType
         return -1;
     }
 }
+
+#undef MANAPIQT_ISSUE_6_10_0
