@@ -21,11 +21,10 @@
 #endif
 
 #if MANAPIQT_ISSUE_6_10_0
-
-#endif
-
 extern void *_ZN15QtWaylandClient19QWaylandIntegration9sInstanceE;
 extern void *_ZNK15QtWaylandClient19QWaylandIntegration21createEventDispatcherEv;
+#endif
+
 
 namespace manapi::qt {
     class event_dispatcher;
@@ -61,7 +60,7 @@ namespace manapi::qt {
 
         ~event_dispatcher() override;
 
-        static manapi::error::status_or<event_dispatcher *> create () MANAPIHTTP_NOEXCEPT;
+        static manapi::status_or<event_dispatcher *> create () MANAPIHTTP_NOEXCEPT;
 
         void unsubscribe () MANAPIHTTP_NOEXCEPT;
 
@@ -112,13 +111,13 @@ namespace manapi::qt {
 
 Q_DECLARE_METATYPE(manapi::qt::poller_data_t*);
 
-inline manapi::error::status_or<manapi::qt::event_dispatcher *> manapi::qt::event_dispatcher::create() MANAPIHTTP_NOEXCEPT {
+inline manapi::status_or<manapi::qt::event_dispatcher *> manapi::qt::event_dispatcher::create() MANAPIHTTP_NOEXCEPT {
     try {
         return new manapi::qt::event_dispatcher();
     }
     catch (std::exception const &e) {
         manapi_log_trace(manapi::debug::LOG_TRACE_MEDIUM, "%s due to %s", "qt:event dispatcher failed", e.what());
-        return manapi::error::status_internal("qt:event dispatcher failed");
+        return manapi::status_internal("qt:event dispatcher failed");
     }
 }
 
@@ -190,7 +189,7 @@ inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEvent
     // will we block on libuv run?
     const bool willWait = (flags & QEventLoop::WaitForMoreEvents);
 
-    manapi::sys_error::status status;
+    manapi::ev::status status;
     // run libuv poll depending on willWait value
     if (!active) {
         if (willWait) {
