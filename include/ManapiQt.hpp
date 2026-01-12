@@ -25,7 +25,6 @@ extern void *_ZN15QtWaylandClient19QWaylandIntegration9sInstanceE;
 extern void *_ZNK15QtWaylandClient19QWaylandIntegration21createEventDispatcherEv;
 #endif
 
-
 namespace manapi::qt {
     class event_dispatcher;
 
@@ -100,7 +99,7 @@ namespace manapi::qt {
 
         std::map<Qt::TimerId, std::pair<manapi::timer, manapi::reference<timer_data_t>>> m_timers;
 
-        std::set<poller_data_t *> m_pollers;
+        std::map<manapi::socket_t, poller_data_t *> m_pollers;
 
         std::atomic<int> m_flags;
 #if MANAPIQT_ISSUE_6_10_0
@@ -152,7 +151,7 @@ inline void manapi::qt::event_dispatcher::unsubscribe() MANAPIHTTP_NOEXCEPT {
     manapi::async::current()->eventloop()->stop_watcher(std::move(this->m_wakeupHandle));
     while (!this->m_pollers.empty()) {
         auto it = this->m_pollers.begin();
-        manapi::reference<poller_data_t> data (*it);
+        manapi::reference<poller_data_t> data (it->second);
         manapi::async::current()->eventloop()->stop_watcher(std::move(data->watcher));
         this->m_pollers.erase(it);
     }
@@ -226,13 +225,13 @@ inline void manapi::qt::event_dispatcher::registerSocketNotifier(QSocketNotifier
     manapi::reference<poller_data_t> ref;
 
     auto const sock = static_cast<manapi::socket_t>(notifier->socket());
-    auto fit = notifier->property("socketData");
-    if(fit.isNull()) {
+    auto fit = this->m_pollers.find(sock);
+    if(fit == this->m_pollers.end()) {
         ref.reset(new poller_data_t{});
         ref->context = this;
         manapi::ev::shared_io watcher;
         try {
-            this->m_pollers.insert(ref.get());
+            this->m_pollers.insert({notifier->socket(), ref.get()});
 
             watcher = ev->create_watcher_socket(
                 sock, [ref] (const manapi::ev::shared_io &, int status, int events) mutable -> void {
@@ -251,20 +250,20 @@ inline void manapi::qt::event_dispatcher::registerSocketNotifier(QSocketNotifier
                 }).unwrap();
         }
         catch (...) {
-            this->m_pollers.erase(ref.get());
+            this->m_pollers.erase(sock);
             std::rethrow_exception(std::current_exception());
         }
 
         ref->watcher = std::move(watcher);
 
-        // attach our custom data to QSocketNotifier
-        if (!notifier->setProperty("socketData", QVariant::fromValue(ref.get()))) {
-            manapi_log_trace(manapi::debug::LOG_TRACE_MEDIUM, "notifier->setProperty with socketData returned false");
-        }
+        // // attach our custom data to QSocketNotifier
+        // if (!notifier->setProperty("socketData", QVariant::fromValue(ref.get()))) {
+        //     manapi_log_trace(manapi::debug::LOG_TRACE_MEDIUM, "notifier->setProperty with socketData returned false");
+        // }
 
     }
     else {
-        ref.reset(fit.value<poller_data_t *>());
+        ref.reset(fit->second);
     }
 
     // setup read and write notifiers
@@ -288,14 +287,19 @@ inline void manapi::qt::event_dispatcher::registerSocketNotifier(QSocketNotifier
 inline void manapi::qt::event_dispatcher::unregisterSocketNotifier(QSocketNotifier* notifier) {
     // transform QSocketNotifier::Type to uv_poll_event
     int events = qtouv(notifier->type());
+
     if (events == -1) {
         return;
     }
 
-    auto fit = notifier->property("socketData");
-    assert(!fit.isNull());
+    auto sock = static_cast<manapi::socket_t> (notifier->socket());
+    auto fit = this->m_pollers.find(sock);
+    if (fit == this->m_pollers.end())
+        // already removed
+        return;
+
     // get our data from libuv handler and actualize events flags
-    auto data = fit.value<poller_data_t*>();
+    auto data = fit->second;
 
     if (data->flags & events & manapi::ev::READ) {
         data->flags ^= manapi::ev::READ;
@@ -309,8 +313,7 @@ inline void manapi::qt::event_dispatcher::unregisterSocketNotifier(QSocketNotifi
     if (data->flags == 0) {
         manapi::async::current()->eventloop()->stop_watcher(std::move(data->watcher));
         // we can delete this now
-        notifier->setProperty("socketData", QVariant());
-        this->m_pollers.erase(data);
+        this->m_pollers.erase(fit);
     }
     else {
         if (auto rhs = data->watcher->start(data->flags)) {
@@ -328,9 +331,11 @@ inline void manapi::qt::event_dispatcher::enableSocketNotifier(QSocketNotifier* 
     }
 
     // get our data from libuv' handler and actualize events flags
-    auto fit = notifier->property("socketData");
-    assert(!fit.isNull());
-    auto data = fit.value<poller_data_t*>();
+
+    auto const sock = static_cast<manapi::socket_t>(notifier->socket());
+    auto fit = this->m_pollers.find(sock);
+    assert(fit != this->m_pollers.end());
+    auto data = fit->second;
     data->flags |= events;
     // start libuv's polling
     if (auto rhs = data->watcher->start(data->flags)) {
@@ -346,9 +351,11 @@ inline void manapi::qt::event_dispatcher::disableSocketNotifier(QSocketNotifier*
     }
 
     // get our data from libuv's handler and actualize events flags
-    auto fit = notifier->property("socketData");
-    assert(!fit.isNull());
-    auto data = fit.value<poller_data_t*>();
+
+    auto const sock = static_cast<manapi::socket_t>(notifier->socket());
+    auto fit = this->m_pollers.find(sock);
+    assert(fit != this->m_pollers.end());
+    auto data = fit->second;
     if (data->flags & events & manapi::ev::READ) {
         data->flags ^= manapi::ev::READ;
     }
