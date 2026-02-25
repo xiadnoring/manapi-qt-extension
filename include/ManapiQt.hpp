@@ -17,12 +17,21 @@
 #include <manapihttp/std/ManapiAsyncContext.hpp>
 
 #ifndef MANAPIQT_ISSUE_6_10_0
-#   define MANAPIQT_ISSUE_6_10_0 QT_VERSION >= QT_VERSION_CHECK(6, 10, 0) && (__linux__) && (__x86_64__)
+#   define MANAPIQT_ISSUE_6_10_0 (QT_VERSION >= QT_VERSION_CHECK(6, 10, 0) && QT_VERSION < QT_VERSION_CHECK(6, 10, 2)) && (__linux__) && (__x86_64__)
 #endif
 
+#ifndef MANAPIQT_ISSUE_6_10_2
+#   define MANAPIQT_ISSUE_6_10_2 (QT_VERSION >= QT_VERSION_CHECK(6, 10, 2) && QT_VERSION < QT_VERSION_CHECK(6, 10, 3)) && (__linux__) && (__x86_64__)
+#endif
+// _ZN22QWindowSystemInterface23flushWindowSystemEventsE6QFlagsIN10QEventLoop17ProcessEventsFlagEE
+//
 #if MANAPIQT_ISSUE_6_10_0
 extern void *_ZN15QtWaylandClient19QWaylandIntegration9sInstanceE;
 extern void *_ZNK15QtWaylandClient19QWaylandIntegration21createEventDispatcherEv;
+#endif
+
+#if MANAPIQT_ISSUE_6_10_2
+extern void *_ZN22QWindowSystemInterface23flushWindowSystemEventsE6QFlagsIN10QEventLoop17ProcessEventsFlagEE;
 #endif
 
 namespace manapi::qt {
@@ -102,6 +111,8 @@ namespace manapi::qt {
         std::map<manapi::socket_t, poller_data_t *> m_pollers;
 
         std::atomic<int> m_flags;
+
+        QEventLoop::ProcessEventsFlags m_process_events_flags;
 #if MANAPIQT_ISSUE_6_10_0
         QEventLoop::ProcessEventsFlags *m_shared_flags;
 #endif
@@ -121,14 +132,19 @@ inline manapi::status_or<manapi::qt::event_dispatcher *> manapi::qt::event_dispa
 }
 
 inline manapi::qt::event_dispatcher::event_dispatcher() : event_dispatcher(nullptr) {
-
+    this->m_processedCallbacks = 0;
+    this->m_flags = 0b1;
 }
 
 inline manapi::qt::event_dispatcher::event_dispatcher(QObject* parent)
     : QAbstractEventDispatcherV2(parent) {
-    this->m_wakeupHandle = manapi::async::current()->eventloop()->create_watcher_async(nullptr).unwrap();
-    this->m_flags.fetch_or(0b1);
+
     this->m_processedCallbacks = 0;
+    this->m_wakeupHandle = manapi::async::current()->eventloop()->create_watcher_async([] (const auto &m) -> void {
+        ::uv_stop(manapi::async::current()->eventloop()->loop());
+    }).unwrap();
+
+    this->m_flags = 0b1;
 #if MANAPIQT_ISSUE_6_10_0
     // C++
     this->m_shared_flags=nullptr;
@@ -172,21 +188,25 @@ inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEvent
     if (this->m_shared_flags)
     *this->m_shared_flags = flags;
 #endif
-
     auto &ev = manapi::async::current()->eventloop();
     bool const active = ev->is_active();
 
-    // we are awake!
-    emit awake();
+    const bool exclude_notifiers = (flags & QEventLoop::ExcludeSocketNotifiers);
+    const bool exclude_timers    = (flags & QEventLoop::X11ExcludeTimers);
 
     // zero out processed callbacks
     this->m_processedCallbacks = 0;
 
-    // time to send posted events
-    QCoreApplication::sendPostedEvents();
-
     // will we block on libuv run?
-    const bool willWait = (flags & QEventLoop::WaitForMoreEvents);
+    const bool willWait = flags.testAnyFlag(QEventLoop::WaitForMoreEvents);
+
+   emit awake();
+
+    QEventLoop::ProcessEventsFlags saved_flags = this->m_process_events_flags;
+    this->m_process_events_flags = flags;
+    // time to send posted events
+
+    QCoreApplication::sendPostedEvents();
 
     manapi::ev::status status;
     // run libuv poll depending on willWait value
@@ -195,7 +215,13 @@ inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEvent
             // we will block! signalize it
             emit aboutToBlock();
 
-            status = ev->run(manapi::ev::RUN_ONCE);
+            do {
+                status = ev->run(manapi::ev::RUN_ONCE);
+            }
+            while (!this->m_processedCallbacks && !(this->m_flags & 0b10));
+
+            if (this->m_flags & 0b10)
+                this->m_flags ^= 0b10;
         } else {
             // run loop once, do not block on no events
             status = ev->run(manapi::ev::RUN_NOWAIT);
@@ -209,8 +235,19 @@ inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEvent
         }
     }
 
+    this->m_process_events_flags = saved_flags;
+
+    if (willWait)
+        emit awake();
+
+    bool res = false;
+
+#if MANAPIQT_ISSUE_6_10_2
+    res = ((bool (*) (QEventLoop::ProcessEventsFlags)) &_ZN22QWindowSystemInterface23flushWindowSystemEventsE6QFlagsIN10QEventLoop17ProcessEventsFlagEE) (flags);
+#endif
+
     // return true if we processed something
-    return this->m_processedCallbacks > 0;
+    return res || this->m_processedCallbacks > 0;
 }
 
 inline void manapi::qt::event_dispatcher::registerSocketNotifier(QSocketNotifier* notifier) {
@@ -303,10 +340,12 @@ inline void manapi::qt::event_dispatcher::unregisterSocketNotifier(QSocketNotifi
 
     if (data->flags & events & manapi::ev::READ) {
         data->flags ^= manapi::ev::READ;
+        data->read_notifier = nullptr;
     }
 
     if (data->flags & events & manapi::ev::WRITE) {
         data->flags ^= manapi::ev::WRITE;
+        data->write_notifier = nullptr;
     }
 
     // no event types left? schedule deletion of libuv's poller
@@ -336,7 +375,17 @@ inline void manapi::qt::event_dispatcher::enableSocketNotifier(QSocketNotifier* 
     auto fit = this->m_pollers.find(sock);
     assert(fit != this->m_pollers.end());
     auto data = fit->second;
-    data->flags |= events;
+    // setup read and write notifiers
+    if (events & manapi::ev::READ) {
+        data->read_notifier = notifier;
+        data->flags |= manapi::ev::READ;
+    }
+
+    // set notifiers
+    if (events & manapi::ev::WRITE) {
+        data->write_notifier = notifier;
+        data->flags |= manapi::ev::WRITE;
+    }
     // start libuv's polling
     if (auto rhs = data->watcher->start(data->flags)) {
         manapi_log_error("%s due to %s", "qt:socket watcher failed", manapi::ev::strerror(rhs));
@@ -489,6 +538,7 @@ inline bool manapi::qt::event_dispatcher::unregisterTimers(QObject* object) {
 
 inline void manapi::qt::event_dispatcher::wakeUp() {
     if (this->m_flags & 0b1) {
+        this->m_flags.fetch_or(0b10);
         this->m_wakeupHandle->send();
     }
 }
