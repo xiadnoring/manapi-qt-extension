@@ -10,6 +10,7 @@
 #include <QEvent>
 #include <QThread>
 #include <QVariant>
+#include <QtGui/qpa/qwindowsysteminterface.h>
 
 #include <manapihttp/ManapiEventLoop.hpp>
 #include <manapihttp/ManapiTimerPool.hpp>
@@ -21,17 +22,12 @@
 #endif
 
 #ifndef MANAPIQT_ISSUE_6_10_2
-#   define MANAPIQT_ISSUE_6_10_2 (QT_VERSION >= QT_VERSION_CHECK(6, 10, 2) && QT_VERSION < QT_VERSION_CHECK(6, 10, 3)) && (__linux__) && (__x86_64__)
+#   define MANAPIQT_ISSUE_6_10_2 (QT_VERSION >= QT_VERSION_CHECK(6, 10, 2)) && (__linux__) && (__x86_64__)
 #endif
-// _ZN22QWindowSystemInterface23flushWindowSystemEventsE6QFlagsIN10QEventLoop17ProcessEventsFlagEE
-//
+
 #if MANAPIQT_ISSUE_6_10_0
 extern void *_ZN15QtWaylandClient19QWaylandIntegration9sInstanceE;
 extern void *_ZNK15QtWaylandClient19QWaylandIntegration21createEventDispatcherEv;
-#endif
-
-#if MANAPIQT_ISSUE_6_10_2
-extern void *_ZN22QWindowSystemInterface23flushWindowSystemEventsE6QFlagsIN10QEventLoop17ProcessEventsFlagEE;
 #endif
 
 namespace manapi::qt {
@@ -243,7 +239,7 @@ inline bool manapi::qt::event_dispatcher::processEvents(QEventLoop::ProcessEvent
     bool res = false;
 
 #if MANAPIQT_ISSUE_6_10_2
-    res = ((bool (*) (QEventLoop::ProcessEventsFlags)) &_ZN22QWindowSystemInterface23flushWindowSystemEventsE6QFlagsIN10QEventLoop17ProcessEventsFlagEE) (flags);
+    res = QWindowSystemInterface::sendWindowSystemEvents (flags);
 #endif
 
     // return true if we processed something
