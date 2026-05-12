@@ -50,7 +50,7 @@ namespace manapi::qt {
     struct timer_data_t {
         uint32_t refcnt;
         event_dispatcher *context;
-        std::map<Qt::TimerId, timer_info_t> ids;
+        std::unordered_map<Qt::TimerId, timer_info_t> ids;
         QObject *parent;
     };
 
@@ -102,9 +102,9 @@ namespace manapi::qt {
 
         std::uint64_t m_processedCallbacks;
 
-        std::map<Qt::TimerId, std::pair<manapi::timer, manapi::reference<timer_data_t>>> m_timers;
+        std::unordered_map <Qt::TimerId, std::pair<manapi::timer, manapi::reference<timer_data_t>>> m_timers;
 
-        std::map<manapi::socket_t, poller_data_t *> m_pollers;
+        std::unordered_map<manapi::socket_t, poller_data_t *> m_pollers;
 
         std::atomic<int> m_flags;
 
